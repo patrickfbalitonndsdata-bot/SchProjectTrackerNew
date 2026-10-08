@@ -154,7 +154,14 @@ export const PsuForm: React.FC<PsuFormProps> = ({
 
   const fallbackConfirmedRef = React.useRef<Set<string>>(new Set());
   const confirmedProjects = confirmedProjectsRef || fallbackConfirmedRef;
-  const typingTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Refs for tracking active form data, per-project typing debounce and check sequence to prevent stale overwrites
+  const formDataRef = useRef<PsuFormData>(formData);
+  formDataRef.current = formData;
+
+  const typingTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const projectCheckSeqRef = useRef<Record<string, number>>({});
+  const isResettingRef = useRef<boolean>(false);
 
   const hasApiConnection = Boolean(sheetConfig.appsScriptUrl || accessToken);
 
@@ -176,9 +183,55 @@ export const PsuForm: React.FC<PsuFormProps> = ({
             jobType: formData.jobType || 'New Installs',
           },
         ];
+  const projectsListRef = useRef<ProjectItem[]>(projectsList);
+  projectsListRef.current = projectsList;
+
+  // Comprehensive reset handler that clears internal statuses, cancels pending syncs, and resets form
+  const handleReset = () => {
+    isResettingRef.current = true;
+    projectCheckSeqRef.current = {};
+
+    // Clear all pending debounce timeouts
+    (Object.values(typingTimeoutsRef.current) as ReturnType<typeof setTimeout>[]).forEach((t) => {
+      if (t) clearTimeout(t);
+    });
+    typingTimeoutsRef.current = {};
+
+    // Clear all per-project version statuses
+    setProjectVersionStatuses({});
+
+    // Reset email update state and refs
+    setIsEmailUpdate(false);
+    isEmailUpdateRef.current = false;
+    savedDateRef.current = '';
+    savedTimeRef.current = '';
+
+    // Reset local UI flags
+    setIsCustomReason(false);
+    setShowOtherReasonsDropdown(false);
+    setOpenStudyPickerId(null);
+    setShowKeywordChips(false);
+    setViewingAttachment(null);
+    setViewingProjectId(null);
+    setSubmissionSuccess(null);
+    setSubmissionError(null);
+    setSubmissionResult(null);
+
+    // Clear confirmed projects set
+    confirmedProjects.current.clear();
+
+    // Call parent onReset
+    onReset();
+
+    // Re-enable normal operations on next tick
+    setTimeout(() => {
+      isResettingRef.current = false;
+    }, 250);
+  };
 
   // Helper to add another project
   const handleAddProject = () => {
+    const current = projectsListRef.current;
     const newProject: ProjectItem = {
       id: `proj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       projectNumber: '',
@@ -186,20 +239,23 @@ export const PsuForm: React.FC<PsuFormProps> = ({
       version: 'Initial',
       jobType: 'New Installs',
     };
-    const updated = [...projectsList, newProject];
+    const updated = [...current, newProject];
+    projectsListRef.current = updated;
     onChange({
-      ...formData,
+      ...formDataRef.current,
       projects: updated,
     });
   };
 
   // Helper to remove a project
   const handleRemoveProject = (id: string) => {
-    if (projectsList.length <= 1) return;
-    const updated = projectsList.filter((p) => p.id !== id);
+    const current = projectsListRef.current;
+    if (current.length <= 1) return;
+    const updated = current.filter((p) => p.id !== id);
+    projectsListRef.current = updated;
     const primary = updated[0];
     onChange({
-      ...formData,
+      ...formDataRef.current,
       projectNumber: primary?.projectNumber || '',
       study: primary?.study || '',
       version: primary?.version || '',
@@ -210,7 +266,10 @@ export const PsuForm: React.FC<PsuFormProps> = ({
 
   // Helper to update a project's field
   const handleUpdateProjectField = (id: string, field: keyof ProjectItem, value: string) => {
-    const updated = projectsList.map((p) => {
+    const currentProjects = projectsListRef.current;
+    const currentFormData = formDataRef.current;
+
+    const updated = currentProjects.map((p) => {
       if (p.id !== id) return p;
       let finalVal = value;
       if (field === 'version' && value.trim().toLowerCase() === 'initial') {
@@ -224,7 +283,7 @@ export const PsuForm: React.FC<PsuFormProps> = ({
           const status = projectVersionStatuses[id];
           const priorCount = status?.count ?? 0;
           if (priorCount > 0) {
-            modified.version = getCurrentProjectVersion(priorCount, formData.region);
+            modified.version = getCurrentProjectVersion(priorCount, currentFormData.region);
           } else if (!modified.version || isRevisedVersion(modified.version)) {
             modified.version = 'Initial';
           }
@@ -232,7 +291,7 @@ export const PsuForm: React.FC<PsuFormProps> = ({
       }
       if (field === 'version') {
         // When Email Update is active, do not force jobType change; let the user customize it based on their needs
-        if (!isEmailUpdate && !formData.isEmailUpdate && modified.jobType !== 'For Correction') {
+        if (!isEmailUpdate && !currentFormData.isEmailUpdate && modified.jobType !== 'For Correction') {
           const isRev = isRevisedVersion(finalVal);
           modified.jobType = isRev
             ? 'Re-PSU (Revised)'
@@ -244,46 +303,52 @@ export const PsuForm: React.FC<PsuFormProps> = ({
       return modified;
     });
 
+    projectsListRef.current = updated;
     const primary = updated[0];
     onChange({
-      ...formData,
+      ...currentFormData,
       projectNumber: primary?.projectNumber || '',
       study: primary?.study || '',
       version: primary?.version || '',
-      jobType: primary?.jobType || formData.jobType || 'New Installs',
+      jobType: primary?.jobType || currentFormData.jobType || 'New Installs',
       projects: updated,
     });
 
-    // If project number changed, debounce version check for this project
+    // If project number changed, debounce version check for this specific project
     if (field === 'projectNumber') {
       const trimmed = value.trim();
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
+      if (typingTimeoutsRef.current[id]) {
+        clearTimeout(typingTimeoutsRef.current[id]);
+        delete typingTimeoutsRef.current[id];
       }
       if (trimmed.length >= 4) {
-        typingTimeoutRef.current = setTimeout(() => {
+        typingTimeoutsRef.current[id] = setTimeout(() => {
           checkSingleProjectVersion(id, trimmed);
-        }, 600);
+        }, 700);
       }
     }
   };
 
   // Toggle handler for EMAIL UPDATE mode
   const handleToggleEmailUpdate = async () => {
+    if (isResettingRef.current) return;
     const nextState = !isEmailUpdate;
     setIsEmailUpdate(nextState);
     isEmailUpdateRef.current = nextState;
 
     if (nextState) {
-      if (formData.psuReceivedDate) savedDateRef.current = formData.psuReceivedDate;
-      if (formData.psuReceivedTime) savedTimeRef.current = formData.psuReceivedTime;
+      if (formDataRef.current.psuReceivedDate) savedDateRef.current = formDataRef.current.psuReceivedDate;
+      if (formDataRef.current.psuReceivedTime) savedTimeRef.current = formDataRef.current.psuReceivedTime;
 
       // For every project, fetch recent RECEIVED TIME and DATE, STUDY, and retain current/latest version
       let fetchedPrimaryDate = '';
       let fetchedPrimaryTime = '';
       let fetchedPrimaryStudy = '';
+      const currentProjects = projectsListRef.current;
+      const currentFormData = formDataRef.current;
+
       const updatedProjects = await Promise.all(
-        projectsList.map(async (proj, index) => {
+        currentProjects.map(async (proj, index) => {
           const trimmed = proj.projectNumber.trim();
           if (!trimmed) return proj;
 
@@ -300,7 +365,7 @@ export const PsuForm: React.FC<PsuFormProps> = ({
               accessToken,
               sheetConfig.appsScriptUrl,
               recentEntries,
-              formData.region
+              currentFormData.region
             );
 
             const retainedVer =
@@ -336,7 +401,7 @@ export const PsuForm: React.FC<PsuFormProps> = ({
               psuReceivedDate: res.lastReceivedDate || '',
               psuReceivedTime: res.lastReceivedTime || '',
               latestVersion: retainedVer,
-              jobType: proj.jobType || formData.jobType || 'New Installs',
+              jobType: proj.jobType || currentFormData.jobType || 'New Installs',
             };
           } catch (err) {
             console.warn('Error fetching recent details on email update toggle:', err);
@@ -345,19 +410,33 @@ export const PsuForm: React.FC<PsuFormProps> = ({
         })
       );
 
-      const primary = updatedProjects[0];
+      if (isResettingRef.current) return;
+      const freshFormData = formDataRef.current;
+      const latestProjects = projectsListRef.current;
+
+      // Preserve any manual edits made while the toggle fetch was processing
+      const mergedProjects = updatedProjects.map((p) => {
+        const live = latestProjects.find((l) => l.id === p.id);
+        return {
+          ...p,
+          projectNumber: live?.projectNumber || p.projectNumber,
+        };
+      });
+
+      projectsListRef.current = mergedProjects;
+      const primary = mergedProjects[0];
       const activeDate = primary?.psuReceivedDate || primary?.latestReceivedDate || fetchedPrimaryDate || '';
       const activeTime = primary?.psuReceivedTime || primary?.latestReceivedTime || fetchedPrimaryTime || '';
       const activeStudy = primary?.study || fetchedPrimaryStudy || '';
 
       onChange({
-        ...formData,
+        ...freshFormData,
         isEmailUpdate: true,
         study: activeStudy,
         psuReceivedDate: activeDate,
         psuReceivedTime: activeTime,
-        version: primary?.version || formData.version,
-        projects: updatedProjects,
+        version: primary?.version || freshFormData.version,
+        projects: mergedProjects,
       });
 
       onShowToast?.({
@@ -368,7 +447,7 @@ export const PsuForm: React.FC<PsuFormProps> = ({
       const restoredDate = savedDateRef.current || getManilaNow().dateStr;
       const restoredTime = savedTimeRef.current || getManilaNow().timeStr;
       onChange({
-        ...formData,
+        ...formDataRef.current,
         psuReceivedDate: restoredDate,
         psuReceivedTime: restoredTime,
         isEmailUpdate: false,
@@ -387,8 +466,13 @@ export const PsuForm: React.FC<PsuFormProps> = ({
     pNumber: string,
     isSilentSync: boolean = false
   ) => {
+    if (isResettingRef.current) return;
     const trimmed = pNumber.trim();
     if (!trimmed) return;
+
+    // Track sequence per project so older in-flight checks never overwrite newer ones
+    const seq = (projectCheckSeqRef.current[pId] || 0) + 1;
+    projectCheckSeqRef.current[pId] = seq;
 
     setProjectVersionStatuses((prev) => ({
       ...prev,
@@ -413,26 +497,38 @@ export const PsuForm: React.FC<PsuFormProps> = ({
         accessToken,
         sheetConfig.appsScriptUrl,
         recentEntries,
-        formData.region
+        formDataRef.current.region
       );
 
-      const curProj = projectsList.find((p) => p.id === pId);
+      // Verify that the result is still valid (not cancelled by reset or a newer sequence)
+      if (isResettingRef.current || projectCheckSeqRef.current[pId] !== seq) {
+        return;
+      }
+
+      const currentProjects = projectsListRef.current;
+      const currentFormData = formDataRef.current;
+      const curProj = currentProjects.find((p) => p.id === pId);
+      if (!curProj) return;
+
       const isForCorrection =
-        curProj?.jobType === 'For Correction' || (!curProj && formData.jobType === 'For Correction');
-      const isEmailUpdateEffective = Boolean(isEmailUpdate || isEmailUpdateRef.current || formData.isEmailUpdate);
+        curProj.jobType === 'For Correction' || currentFormData.jobType === 'For Correction';
+      const isEmailUpdateEffective = Boolean(
+        isEmailUpdate || isEmailUpdateRef.current || currentFormData.isEmailUpdate
+      );
 
       // CRITICAL REQUIREMENT: EMAIL UPDATE mode active
       // In EMAIL UPDATE mode, retain the current/latest version, fetch latest study and recent date & time
       // The prompt warning modal for New Version or For Correction MUST NOT show.
       // Job Type remains customizable based on user's needs.
+      // Manual input for Project Number is strictly preserved!
       if (isEmailUpdateEffective) {
         const retainedVersion =
           latestVersion ||
           lastVersion ||
           currentVersion ||
           (existingCount > 0
-            ? getCurrentProjectVersion(existingCount, formData.region, lastVersion)
-            : curProj?.version || 'Initial');
+            ? getCurrentProjectVersion(existingCount, currentFormData.region, lastVersion)
+            : curProj.version || 'Initial');
         const fetchedStudy = study || latestStudy || '';
 
         setProjectVersionStatuses((prev) => ({
@@ -446,27 +542,31 @@ export const PsuForm: React.FC<PsuFormProps> = ({
           },
         }));
 
-        const updated = projectsList.map((p) =>
+        const updated = currentProjects.map((p) =>
           p.id === pId
             ? {
                 ...p,
-                study: fetchedStudy || '',
+                projectNumber: p.projectNumber || trimmed, // CRITICAL: NEVER overwrite user manual input!
+                study: fetchedStudy || p.study || '',
                 version: retainedVersion,
-                latestReceivedDate: lastReceivedDate || '',
-                latestReceivedTime: lastReceivedTime || '',
-                psuReceivedDate: lastReceivedDate || '',
-                psuReceivedTime: lastReceivedTime || '',
+                latestReceivedDate: lastReceivedDate || p.latestReceivedDate || '',
+                latestReceivedTime: lastReceivedTime || p.latestReceivedTime || '',
+                psuReceivedDate: lastReceivedDate || p.psuReceivedDate || '',
+                psuReceivedTime: lastReceivedTime || p.psuReceivedTime || '',
                 latestVersion: retainedVersion,
-                jobType: p.jobType || formData.jobType || 'New Installs',
+                jobType: p.jobType || currentFormData.jobType || 'New Installs',
               }
             : p
         );
+
+        projectsListRef.current = updated;
         const primary = updated[0];
         const activeDate = primary?.psuReceivedDate || primary?.latestReceivedDate || lastReceivedDate || '';
         const activeTime = primary?.psuReceivedTime || primary?.latestReceivedTime || lastReceivedTime || '';
         const activeStudy = primary?.study || fetchedStudy || '';
+
         onChange({
-          ...formData,
+          ...currentFormData,
           projectNumber: primary?.projectNumber || '',
           study: activeStudy,
           version: primary?.version || retainedVersion,
@@ -481,13 +581,12 @@ export const PsuForm: React.FC<PsuFormProps> = ({
       // CRITICAL REQUIREMENT:
       // When the google sheet syncs, The version of the Project Number that has a Job Type of "For Correction" Status
       // should NOT be overwritten and will retain as the current/recent version even when synced.
-      // Only implement this for "For Correction" Job Type.
       if (isForCorrection) {
         const retainedVersion =
           currentVersion ||
           (existingCount > 0
-            ? getCurrentProjectVersion(existingCount, formData.region)
-            : curProj?.version || 'Initial');
+            ? getCurrentProjectVersion(existingCount, currentFormData.region)
+            : curProj.version || 'Initial');
 
         setProjectVersionStatuses((prev) => ({
           ...prev,
@@ -499,12 +598,20 @@ export const PsuForm: React.FC<PsuFormProps> = ({
           },
         }));
 
-        const updated = projectsList.map((p) =>
-          p.id === pId ? { ...p, version: retainedVersion, jobType: 'For Correction' } : p
+        const updated = currentProjects.map((p) =>
+          p.id === pId
+            ? {
+                ...p,
+                projectNumber: p.projectNumber || trimmed,
+                version: retainedVersion,
+                jobType: 'For Correction',
+              }
+            : p
         );
+        projectsListRef.current = updated;
         const primary = updated[0];
         onChange({
-          ...formData,
+          ...currentFormData,
           projectNumber: primary?.projectNumber || '',
           study: primary?.study || '',
           version: primary?.version || retainedVersion,
@@ -522,8 +629,6 @@ export const PsuForm: React.FC<PsuFormProps> = ({
       const isAlreadyConfirmed = confirmedProjects.current.has(trimmed.toLowerCase());
 
       // If existing project detected in Google Sheet and not yet confirmed:
-      // Show warning modal with Cancel, New Version, or For Correction (retains current version)
-      // When Email Update is toggled on, the Prompt Warning Modal for New Version or For Correction should not show
       if (
         existingCount > 0 &&
         !isAlreadyConfirmed &&
@@ -531,8 +636,7 @@ export const PsuForm: React.FC<PsuFormProps> = ({
         onRequestReentryConfirm &&
         !isEmailUpdateEffective
       ) {
-        const curProj = projectsList.find((p) => p.id === pId);
-        const currentVer = getCurrentProjectVersion(existingCount, formData.region);
+        const currentVer = getCurrentProjectVersion(existingCount, currentFormData.region);
         const decision = await onRequestReentryConfirm([
           {
             id: pId,
@@ -543,21 +647,35 @@ export const PsuForm: React.FC<PsuFormProps> = ({
             targetJobType: 'Re-PSU (Revised)',
             correctionJobType: 'For Correction',
             sheetName: sheetConfig.sheetName,
-            study: curProj?.study,
-            sourceFile: curProj?.sourceFile,
+            study: curProj.study,
+            sourceFile: curProj.sourceFile,
             source: 'form_input',
           },
         ]);
 
+        if (isResettingRef.current || projectCheckSeqRef.current[pId] !== seq) {
+          return;
+        }
+
+        const freshProjects = projectsListRef.current;
+        const freshFormData = formDataRef.current;
+
         if (decision === 'for_correction') {
-          // Option "For Correction": retain current/recent version and set Job Type to "For Correction"
           confirmedProjects.current.add(trimmed.toLowerCase());
-          const updated = projectsList.map((p) =>
-            p.id === pId ? { ...p, projectNumber: trimmed, version: currentVer, jobType: 'For Correction' } : p
+          const updated = freshProjects.map((p) =>
+            p.id === pId
+              ? {
+                  ...p,
+                  projectNumber: p.projectNumber || trimmed,
+                  version: currentVer,
+                  jobType: 'For Correction',
+                }
+              : p
           );
+          projectsListRef.current = updated;
           const primary = updated[0];
           onChange({
-            ...formData,
+            ...freshFormData,
             projectNumber: primary?.projectNumber || '',
             study: primary?.study || '',
             version: primary?.version || currentVer,
@@ -570,17 +688,24 @@ export const PsuForm: React.FC<PsuFormProps> = ({
           });
           return;
         } else if (decision === 'new_version' || decision === true) {
-          // Option "New Version": advance to next revision version
           confirmedProjects.current.add(trimmed.toLowerCase());
           const isRev = isRevisedVersion(version);
           const nextJobType = isRev ? 'Re-PSU (Revised)' : 'New Installs';
 
-          const updated = projectsList.map((p) =>
-            p.id === pId ? { ...p, projectNumber: trimmed, version, jobType: nextJobType } : p
+          const updated = freshProjects.map((p) =>
+            p.id === pId
+              ? {
+                  ...p,
+                  projectNumber: p.projectNumber || trimmed,
+                  version,
+                  jobType: nextJobType,
+                }
+              : p
           );
+          projectsListRef.current = updated;
           const primary = updated[0];
           onChange({
-            ...formData,
+            ...freshFormData,
             projectNumber: primary?.projectNumber || '',
             study: primary?.study || '',
             version: primary?.version || '',
@@ -593,58 +718,64 @@ export const PsuForm: React.FC<PsuFormProps> = ({
           });
           return;
         } else {
-          // Option "Cancel" which will not go through: clear the project number
+          // Option "Cancel": KEEP user's manual Project Number! Never wipe the field!
           confirmedProjects.current.delete(trimmed.toLowerCase());
-          const updated = projectsList.map((p) =>
-            p.id === pId ? { ...p, projectNumber: '', version: 'Initial', jobType: 'New Installs' } : p
+          const updated = freshProjects.map((p) =>
+            p.id === pId
+              ? {
+                  ...p,
+                  projectNumber: p.projectNumber || trimmed, // PRESERVE MANUAL INPUT!
+                  version: 'Initial',
+                  jobType: 'New Installs',
+                }
+              : p
           );
+          projectsListRef.current = updated;
           const primary = updated[0];
           onChange({
-            ...formData,
+            ...freshFormData,
             projectNumber: primary?.projectNumber || '',
             study: primary?.study || '',
             version: primary?.version || 'Initial',
             jobType: primary?.jobType || 'New Installs',
             projects: updated,
           });
-          setProjectVersionStatuses((prev) => {
-            const next = { ...prev };
-            delete next[pId];
-            return next;
-          });
           onShowToast?.({
-            title: 'Reentry Cancelled',
-            desc: `Project ${trimmed} cancelled. Project Number field cleared.`,
+            title: 'Reentry Warning Dismissed',
+            desc: `Retained Project Number ${trimmed} (Initial version).`,
           });
           return;
         }
       }
 
       // Normal flow (initial or already confirmed)
-      const currentProj = projectsList.find((item) => item.id === pId);
-      if (currentProj && currentProj.jobType === 'For Correction') {
+      const freshProjects = projectsListRef.current;
+      const freshFormData = formDataRef.current;
+      const targetP = freshProjects.find((item) => item.id === pId);
+      if (targetP && targetP.jobType === 'For Correction') {
         return;
       }
       if (
-        currentProj &&
-        (!currentProj.version ||
-          currentProj.version.toLowerCase() === 'initial' ||
-          /^v\d+$/i.test(currentProj.version) ||
-          currentProj.version.startsWith('('))
+        targetP &&
+        (!targetP.version ||
+          targetP.version.toLowerCase() === 'initial' ||
+          /^v\d+$/i.test(targetP.version) ||
+          targetP.version.startsWith('('))
       ) {
         const isRev = isRevisedVersion(version);
         const nextJobType = isRev
           ? 'Re-PSU (Revised)'
-          : currentProj.jobType === 'Re-PSU (Revised)'
+          : targetP.jobType === 'Re-PSU (Revised)'
           ? 'New Installs'
-          : currentProj.jobType || 'New Installs';
+          : targetP.jobType || 'New Installs';
 
-        const updated = projectsList.map((p) =>
-          p.id === pId ? { ...p, version, jobType: nextJobType } : p
+        const updated = freshProjects.map((p) =>
+          p.id === pId ? { ...p, projectNumber: p.projectNumber || trimmed, version, jobType: nextJobType } : p
         );
+        projectsListRef.current = updated;
         const primary = updated[0];
         onChange({
-          ...formData,
+          ...freshFormData,
           projectNumber: primary?.projectNumber || '',
           study: primary?.study || '',
           version: primary?.version || '',
@@ -663,8 +794,10 @@ export const PsuForm: React.FC<PsuFormProps> = ({
 
   // Check versions for all projects when Region changes (silent sync)
   useEffect(() => {
+    if (isResettingRef.current || !formData.region) return;
     const timer = setTimeout(() => {
-      projectsList.forEach((proj) => {
+      if (isResettingRef.current || !formData.region) return;
+      projectsListRef.current.forEach((proj) => {
         if (proj.projectNumber && proj.projectNumber.trim()) {
           checkSingleProjectVersion(proj.id, proj.projectNumber.trim(), true);
         }
@@ -1059,7 +1192,7 @@ export const PsuForm: React.FC<PsuFormProps> = ({
           <button
             id="reset-form-btn"
             type="button"
-            onClick={onReset}
+            onClick={handleReset}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-sm border shadow-2xs transition-colors backdrop-blur-md ${
               season === 'halloween'
                 ? 'bg-purple-950/60 hover:bg-purple-900/60 text-orange-200 border-purple-500/40'
@@ -1598,8 +1731,10 @@ export const PsuForm: React.FC<PsuFormProps> = ({
                           handleUpdateProjectField(project.id, 'projectNumber', e.target.value)
                         }
                         onBlur={() => {
-                          if (project.projectNumber && project.projectNumber.trim().length >= 4) {
-                            checkSingleProjectVersion(project.id, project.projectNumber.trim());
+                          const live = projectsListRef.current.find((p) => p.id === project.id);
+                          const targetNum = (live?.projectNumber || project.projectNumber).trim();
+                          if (targetNum && targetNum.length >= 4) {
+                            checkSingleProjectVersion(project.id, targetNum);
                           }
                         }}
                         className={`w-full h-9.5 px-3 text-xs rounded-md font-mono shadow-2xs font-bold transition-all ${
@@ -1708,9 +1843,10 @@ export const PsuForm: React.FC<PsuFormProps> = ({
                         {project.projectNumber.trim() && (
                           <button
                             type="button"
-                            onClick={() =>
-                              checkSingleProjectVersion(project.id, project.projectNumber)
-                            }
+                            onClick={() => {
+                              const live = projectsListRef.current.find((p) => p.id === project.id);
+                              checkSingleProjectVersion(project.id, (live?.projectNumber || project.projectNumber).trim());
+                            }}
                             disabled={isChecking}
                             className="inline-flex items-center gap-1 text-[10px] text-blue-600 hover:underline shrink-0 font-bold uppercase tracking-wider"
                             title="Query sheet history for this project"
