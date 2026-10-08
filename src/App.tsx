@@ -515,7 +515,7 @@ export default function App() {
       projectNumber: '',
       study: '',
       jobType: 'New Installs',
-      version: '',
+      version: 'Initial',
       projects: [
         {
           id: 'proj-1',
@@ -532,6 +532,13 @@ export default function App() {
     });
     confirmedProjectsRef.current.clear();
     setCurrentResult(null);
+    setToastMessage({
+      title: 'Form Reset',
+      desc: 'All fields have been cleared and reset to initial state.',
+    });
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 3000);
   };
 
   const handleSuccessAppend = (updatedRange: string) => {
