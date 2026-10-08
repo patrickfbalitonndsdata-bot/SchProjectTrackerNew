@@ -84,7 +84,15 @@ export default function App() {
   const [isSheetSettingsOpen, setIsSheetSettingsOpen] = useState<boolean>(false);
   const [isAppsScriptModalOpen, setIsAppsScriptModalOpen] = useState<boolean>(false);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState<boolean>(false);
-  const [pendingProtectedAction, setPendingProtectedAction] = useState<'appsScript' | 'sheetSettings' | null>(null);
+  const [pendingProtectedAction, setPendingProtectedAction] = useState<'appsScript' | 'sheetSettings' | 'projectTracker' | null>(null);
+  const [isProjectTrackerUnlocked, setIsProjectTrackerUnlocked] = useState<boolean>(false);
+  const [hideProjectTrackerLink, setHideProjectTrackerLink] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('psu_hide_project_tracker_nav') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [codeCopiedBanner, setCodeCopiedBanner] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'entry' | 'mirror'>('entry');
   const [outgoingTab, setOutgoingTab] = useState<'entry' | 'mirror' | null>(null);
@@ -170,6 +178,31 @@ export default function App() {
     setIsPasswordModalOpen(true);
   };
 
+  const handleRequestProjectTracker = () => {
+    if (isProjectTrackerUnlocked) {
+      window.open(sheetConfig.spreadsheetUrl || FIXED_SPREADSHEET_URL, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    setPendingProtectedAction('projectTracker');
+    setIsPasswordModalOpen(true);
+  };
+
+  const handleLockProjectTracker = () => {
+    setIsProjectTrackerUnlocked(false);
+    setToastMessage({
+      title: 'Project Tracker Locked',
+      desc: 'Password ("schedulingteam2026") required to access again.',
+    });
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const handleToggleHideProjectTracker = (hide: boolean) => {
+    setHideProjectTrackerLink(hide);
+    try {
+      localStorage.setItem('psu_hide_project_tracker_nav', String(hide));
+    } catch {}
+  };
+
   const handlePasswordSuccess = () => {
     const action = pendingProtectedAction;
     setIsPasswordModalOpen(false);
@@ -178,6 +211,14 @@ export default function App() {
       setIsAppsScriptModalOpen(true);
     } else if (action === 'sheetSettings') {
       setIsSheetSettingsOpen(true);
+    } else if (action === 'projectTracker') {
+      setIsProjectTrackerUnlocked(true);
+      window.open(sheetConfig.spreadsheetUrl || FIXED_SPREADSHEET_URL, '_blank', 'noopener,noreferrer');
+      setToastMessage({
+        title: 'Project Tracker Unlocked',
+        desc: 'Access granted with team password. Project Tracker opened in new tab.',
+      });
+      setTimeout(() => setToastMessage(null), 4000);
     }
   };
 
@@ -615,6 +656,10 @@ export default function App() {
         userEmail={userEmail}
         onChangeUserEmail={handleUserEmailChange}
         onOpenSheetSettings={handleRequestSheetSettings}
+        isProjectTrackerUnlocked={isProjectTrackerUnlocked}
+        onRequestProjectTracker={handleRequestProjectTracker}
+        onLockProjectTracker={handleLockProjectTracker}
+        hideProjectTrackerLink={hideProjectTrackerLink}
       />
 
       {/* 3D Spherical Carousel Stage for Tab Transitions (Sliding circular sidewards like a sphere circling) */}
@@ -955,6 +1000,8 @@ export default function App() {
         targetFeatureName={
           pendingProtectedAction === 'appsScript'
             ? 'Apps Script API Setup'
+            : pendingProtectedAction === 'projectTracker'
+            ? 'Project Tracker Google Sheet'
             : 'Application & Sheet Settings'
         }
       />
@@ -975,6 +1022,8 @@ export default function App() {
         config={sheetConfig}
         onSaveConfig={handleSaveSheetConfig}
         onRequireAuth={handleRequestAppsScriptSetup}
+        hideProjectTrackerLink={hideProjectTrackerLink}
+        onToggleHideProjectTrackerLink={handleToggleHideProjectTracker}
       />
 
       {/* Existing Project Number Reentry Warning Modal */}
