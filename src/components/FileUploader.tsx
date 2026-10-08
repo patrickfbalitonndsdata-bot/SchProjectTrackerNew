@@ -44,6 +44,17 @@ export const FileUploader: React.FC<FileUploaderProps> = ({
   const [selectedPdfForView, setSelectedPdfForView] = useState<AttachmentInfo | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  React.useEffect(() => {
+    if (!currentResult) {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      setShowExtractedDetails(false);
+      setShowAttachmentSnippet(false);
+      setUploadError(null);
+    }
+  }, [currentResult]);
+
   /**
    * For all attached PDF files:
    * Captures the Page 1 header & PROJECT DETAILS screenshot (as in user reference photo)
