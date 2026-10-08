@@ -111,6 +111,29 @@ function cleanValue(val: string | null | undefined): string {
     .trim();
 }
 
+// Extract ALL Project Numbers found in text or subject
+export function extractAllProjectNumbers(text: string, subject: string = ''): string[] {
+  const combined = `${subject}\n${text}`;
+  const found = new Set<string>();
+
+  // 1. Scan for standard ##-###### or ##-##### patterns
+  const matches = combined.matchAll(/\b(\d{2}-\d{5,7})\b/g);
+  for (const m of matches) {
+    if (m[1]) found.add(m[1].trim());
+  }
+
+  // 2. Scan for Project No / Project # labels
+  const labelMatches = combined.matchAll(/(?:project(?:\s*(?:no\.?|#|number|code))?|prj)\s*[:=\-]?\s*([A-Za-z0-9\-_]{4,20})/gi);
+  for (const lm of labelMatches) {
+    if (lm[1]) {
+      const cleaned = cleanValue(lm[1]);
+      if (cleaned) found.add(cleaned);
+    }
+  }
+
+  return Array.from(found);
+}
+
 // Extract Project Number (##-###### e.g., 26-770124 or project labels)
 export function extractProjectNumber(text: string, subject: string = ''): string {
   const combined = `${subject}\n${text}`;
@@ -206,7 +229,17 @@ function extractStringsFromMsgBuffer(buffer: ArrayBuffer): string {
  * Uses 100% native Web APIs without Node.js polyfill dependencies.
  */
 function extractAllProjects(text: string, subject: string, fileName: string, defaultStudy: string, defaultVersion: string) {
-  // If parsing a single file (like an email or PDF), return exactly one project entry
+  const allNumbers = extractAllProjectNumbers(text, subject);
+  if (allNumbers.length > 0) {
+    return allNumbers.map((pNum, idx) => ({
+      id: `proj-${idx + 1}`,
+      projectNumber: pNum,
+      study: defaultStudy,
+      version: defaultVersion,
+      jobType: getDefaultJobTypeForVersion(defaultVersion),
+      sourceFile: fileName,
+    }));
+  }
   const projectNumber = extractProjectNumber(text, `${subject} ${fileName}`);
   return [
     {
@@ -319,7 +352,7 @@ export async function parseFileClientSide(file: File): Promise<ParseResult> {
     const firstPdfWithStudy = emlAttachments.find((a) => a.study);
     const finalStudyType = firstPdfWithStudy?.study || study;
 
-    const compiledProjects = emlAttachments.length > 0
+    let compiledProjects = emlAttachments.length > 0
       ? emlAttachments.map((att, idx) => ({
           id: `proj-${idx + 1}`,
           projectNumber: att.projectNumber || finalPrj,
@@ -329,6 +362,23 @@ export async function parseFileClientSide(file: File): Promise<ParseResult> {
           sourceFile: att.fileName,
         }))
       : extractAllProjects(text, subject, fileName, finalStudyType, version);
+
+    // Also include any other unique project numbers found in the email body / subject
+    const bodyNumbers = extractAllProjectNumbers(text, subject);
+    const existingPrjSet = new Set(compiledProjects.map((p) => (p.projectNumber || '').trim().toLowerCase()).filter(Boolean));
+    for (const bNum of bodyNumbers) {
+      if (!existingPrjSet.has(bNum.toLowerCase())) {
+        existingPrjSet.add(bNum.toLowerCase());
+        compiledProjects.push({
+          id: `proj-${compiledProjects.length + 1}`,
+          projectNumber: bNum,
+          study: finalStudyType,
+          version,
+          jobType: getDefaultJobTypeForVersion(version),
+          sourceFile: `${fileName} (Email Body)`,
+        });
+      }
+    }
 
     return {
       success: true,
@@ -445,7 +495,7 @@ export async function parseFileClientSide(file: File): Promise<ParseResult> {
     const finalStudyType = firstPdfWithStudy?.study || study;
 
     // Strict 1-to-1 Rule: Project count matches attached PDF count
-    const compiledProjects = msgAttachments.length > 0
+    let compiledProjects = msgAttachments.length > 0
       ? msgAttachments.map((att, idx) => ({
           id: `proj-${idx + 1}`,
           projectNumber: att.projectNumber || finalPrj,
@@ -455,6 +505,23 @@ export async function parseFileClientSide(file: File): Promise<ParseResult> {
           sourceFile: att.fileName,
         }))
       : extractAllProjects(extractedText, subject, fileName, finalStudyType, version);
+
+    // Also include any other unique project numbers found in the email body / subject
+    const bodyNumbers = extractAllProjectNumbers(extractedText, subject);
+    const existingPrjSet = new Set(compiledProjects.map((p) => (p.projectNumber || '').trim().toLowerCase()).filter(Boolean));
+    for (const bNum of bodyNumbers) {
+      if (!existingPrjSet.has(bNum.toLowerCase())) {
+        existingPrjSet.add(bNum.toLowerCase());
+        compiledProjects.push({
+          id: `proj-${compiledProjects.length + 1}`,
+          projectNumber: bNum,
+          study: finalStudyType,
+          version,
+          jobType: getDefaultJobTypeForVersion(version),
+          sourceFile: `${fileName} (Email Body)`,
+        });
+      }
+    }
 
     return {
       success: true,
