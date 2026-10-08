@@ -4,6 +4,7 @@ import {
   ExternalLink,
   Settings,
   Lock,
+  Unlock,
   FileSpreadsheet,
   FileText,
   Sun,
@@ -23,6 +24,10 @@ interface NavbarProps {
   userEmail?: string;
   onChangeUserEmail?: (email: string) => void;
   onOpenSheetSettings?: () => void;
+  isProjectTrackerUnlocked?: boolean;
+  onRequestProjectTracker?: () => void;
+  onLockProjectTracker?: () => void;
+  hideProjectTrackerLink?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -33,6 +38,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   sheetTitle,
   sheetUrl,
   onOpenSheetSettings,
+  isProjectTrackerUnlocked = false,
+  onRequestProjectTracker,
+  onLockProjectTracker,
+  hideProjectTrackerLink = false,
 }) => {
   const { isDark, toggleTheme, season } = useTheme();
   const [manilaClock, setManilaClock] = useState<string>('');
@@ -163,18 +172,51 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </button>
 
-          {/* Google Sheet Link */}
-          <a
-            href={sheetUrl || FIXED_SPREADSHEET_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Open Google Sheet in new tab"
-            className="group inline-flex items-center gap-1.5 h-8 px-2.5 sm:px-3 rounded-full text-xs font-semibold tracking-wide text-slate-700 hover:text-blue-700 bg-transparent hover:bg-blue-50/80 transition-all duration-200 transform hover:-translate-y-0.5 active:scale-95 cursor-pointer"
-          >
-            <span className="hidden lg:inline">{sheetTitle || FIXED_SHEET_NAME}</span>
-            <span className="lg:hidden">Sheet</span>
-            <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-blue-600 transition-all duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-          </a>
+          {/* Project Tracker Google Sheet Link (Locked with Password "schedulingteam2026") */}
+          {!hideProjectTrackerLink && (
+            isProjectTrackerUnlocked ? (
+              <div className="flex items-center gap-1">
+                <a
+                  href={sheetUrl || FIXED_SPREADSHEET_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  id="navbar-project-tracker-btn"
+                  title="Open Project Tracker Google Sheet in new tab (Unlocked)"
+                  className="group inline-flex items-center gap-1.5 h-8 px-2.5 sm:px-3 rounded-full text-xs font-semibold tracking-wide text-emerald-700 dark:text-emerald-300 hover:text-emerald-800 dark:hover:text-emerald-200 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100/80 dark:hover:bg-emerald-900/60 border border-emerald-300 dark:border-emerald-600/50 transition-all duration-200 transform hover:-translate-y-0.5 active:scale-95 cursor-pointer shadow-2xs"
+                >
+                  <Unlock className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
+                  <span className="hidden lg:inline">{sheetTitle || FIXED_SHEET_NAME}</span>
+                  <span className="lg:hidden">Tracker</span>
+                  <ExternalLink className="w-3 h-3 text-emerald-600 dark:text-emerald-400 transition-all duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                </a>
+                {onLockProjectTracker && (
+                  <button
+                    type="button"
+                    onClick={onLockProjectTracker}
+                    title="Lock Project Tracker link"
+                    className="h-8 w-8 inline-flex items-center justify-center rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-amber-400 hover:bg-slate-100 dark:hover:bg-[#102046] border border-transparent hover:border-slate-200 dark:hover:border-[#1C3565] transition-all cursor-pointer"
+                  >
+                    <Lock className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <button
+                type="button"
+                id="navbar-project-tracker-btn"
+                onClick={onRequestProjectTracker}
+                title="Project Tracker (Locked &bull; Password protected: schedulingteam2026)"
+                className="group inline-flex items-center gap-1.5 h-8 px-2.5 sm:px-3 rounded-full text-xs font-semibold tracking-wide text-slate-700 dark:text-slate-200 hover:text-amber-800 dark:hover:text-amber-300 bg-slate-50 dark:bg-[#102046] hover:bg-amber-50/80 dark:hover:bg-[#162C5C] border border-slate-200 dark:border-[#1C3565] hover:border-amber-400/50 transition-all duration-200 transform hover:-translate-y-0.5 active:scale-95 cursor-pointer shadow-2xs"
+              >
+                <Lock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform" />
+                <span className="hidden lg:inline">{sheetTitle || FIXED_SHEET_NAME}</span>
+                <span className="lg:hidden">Tracker</span>
+                <span className="px-1.5 py-0.2 text-[8px] font-mono font-bold bg-amber-100 dark:bg-amber-400/20 text-amber-800 dark:text-amber-300 rounded border border-amber-300 dark:border-amber-400/40 uppercase">
+                  Locked
+                </span>
+              </button>
+            )
+          )}
 
           {/* Settings Modal */}
           {onOpenSheetSettings && (
