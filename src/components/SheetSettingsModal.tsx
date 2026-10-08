@@ -24,6 +24,8 @@ interface SheetSettingsModalProps {
   onSaveConfig: (newConfig: SheetConfig) => void;
   onOpenAppsScriptSetup?: () => void;
   onRequireAuth?: () => void;
+  hideProjectTrackerLink?: boolean;
+  onToggleHideProjectTrackerLink?: (hide: boolean) => void;
 }
 
 export const SheetSettingsModal: React.FC<SheetSettingsModalProps> = ({
@@ -31,6 +33,8 @@ export const SheetSettingsModal: React.FC<SheetSettingsModalProps> = ({
   onClose,
   config,
   onSaveConfig,
+  hideProjectTrackerLink = false,
+  onToggleHideProjectTrackerLink,
 }) => {
   const { season, seasonMode, setSeasonMode, currentYear } = useTheme();
   const [activeTab, setActiveTab] = useState<'sheet' | 'theme'>('theme');
@@ -528,6 +532,29 @@ export const SheetSettingsModal: React.FC<SheetSettingsModalProps> = ({
                   ID: {config.spreadsheetId}
                 </div>
               </div>
+
+              {/* Project Tracker Navbar Visibility Control */}
+              {onToggleHideProjectTrackerLink && (
+                <div className="p-3 bg-slate-50 dark:bg-[#060D1E] rounded-xl border border-slate-200 dark:border-[#1C3565] flex items-center justify-between gap-3">
+                  <div>
+                    <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 block">
+                      Hide Project Tracker Link on Navbar
+                    </span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-0.5">
+                      Toggle to hide or show the locked Project Tracker button link on the top navigation bar.
+                    </span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(hideProjectTrackerLink)}
+                      onChange={(e) => onToggleHideProjectTrackerLink(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-[#102046] peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-blue-600 dark:peer-checked:bg-amber-500" />
+                  </label>
+                </div>
+              )}
 
               {/* Sheet Tab Footer */}
               <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-[#1C3565]">
