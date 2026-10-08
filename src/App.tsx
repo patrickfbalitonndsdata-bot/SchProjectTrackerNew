@@ -23,6 +23,7 @@ import { SheetSettingsModal } from './components/SheetSettingsModal';
 import { AppsScriptSetupModal } from './components/AppsScriptSetupModal';
 import { PasswordPromptModal } from './components/PasswordPromptModal';
 import { ReentryWarningModal, ExistingProjectReentryInfo, ReentryDecision } from './components/ReentryWarningModal';
+import { EmailUpdateProjectSelectorModal, ExtractedProjectCandidate } from './components/EmailUpdateProjectSelectorModal';
 import { PsuFormData, ParseResult, SheetConfig, SheetEntryRow } from './types';
 import { getManilaNow, formatTimeToAmPm } from './lib/dateUtils';
 import { isRevisedVersion } from './lib/roster';
@@ -93,6 +94,17 @@ export default function App() {
       return false;
     }
   });
+
+  // Modal prompt state for Email Update project selection
+  const [emailUpdateSelectorState, setEmailUpdateSelectorState] = useState<{
+    isOpen: boolean;
+    candidates: ExtractedProjectCandidate[];
+    fileName: string;
+    rawResult: ParseResult;
+  } | null>(null);
+
+  // Stored extracted project candidates from the parsed Outlook/PDF file
+  const [parsedFileCandidates, setParsedFileCandidates] = useState<ExtractedProjectCandidate[]>([]);
   const [codeCopiedBanner, setCodeCopiedBanner] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'entry' | 'mirror'>('entry');
   const [outgoingTab, setOutgoingTab] = useState<'entry' | 'mirror' | null>(null);
@@ -222,6 +234,124 @@ export default function App() {
     }
   };
 
+  const handleOpenEmailUpdateSelector = () => {
+    if (parsedFileCandidates.length > 0) {
+      setEmailUpdateSelectorState({
+        isOpen: true,
+        candidates: parsedFileCandidates,
+        fileName: currentResult?.metadata?.fileName || 'Outlook File',
+        rawResult: currentResult!,
+      });
+    } else {
+      setToastMessage({
+        title: 'No Extracted Projects',
+        desc: 'Please upload an Outlook email file (.msg or .eml) or PDF first to extract Project Numbers.',
+      });
+      setTimeout(() => setToastMessage(null), 3500);
+    }
+  };
+
+  const handleConfirmEmailUpdateProjects = async (selected: ExtractedProjectCandidate[]) => {
+    if (!selected || selected.length === 0) {
+      setToastMessage({
+        title: 'All Projects Disregarded',
+        desc: 'No project numbers were selected for this form. You can select again from Outlook or enter manually.',
+      });
+      setTimeout(() => setToastMessage(null), 4000);
+      return;
+    }
+
+    const targetRegion = currentResult?.extractedData?.region || formData.region || '';
+    const defaultInitialVersion = 'Initial';
+
+    // REQUIREMENT FOR EMAIL UPDATE:
+    // 1. Fetch only Project Numbers from the PDF / Outlook files.
+    // 2. For STUDY/STUDY TYPE and VERSION: base inputs from the Latest record from Google Sheet.
+    // 3. For PSU Received Date and Time: fetch the Last record from Google Sheet instead of current time/date of day.
+    // 4. For JOB TYPE: let the user customize it based on their needs.
+    const resolvedProjects = await Promise.all(
+      selected.map(async (proj) => {
+        let existingCount = 0;
+        let curVersion = defaultInitialVersion;
+        let lastReceivedDate = '';
+        let lastReceivedTime = '';
+        let fetchedStudy = '';
+        const trimmed = (proj.projectNumber || '').trim();
+
+        if (trimmed) {
+          try {
+            const res = await calculateProjectVersion(
+              sheetConfig.spreadsheetId,
+              sheetConfig.sheetName,
+              trimmed,
+              null,
+              sheetConfig.appsScriptUrl,
+              liveRecentEntries,
+              targetRegion
+            );
+            existingCount = res.existingCount;
+            curVersion = res.currentVersion;
+            lastReceivedDate = res.lastReceivedDate || '';
+            lastReceivedTime = res.lastReceivedTime || '';
+            fetchedStudy = res.study || res.latestStudy || '';
+          } catch (err) {
+            console.warn('Could not auto-calculate version on selection for', trimmed, err);
+          }
+        }
+
+        const retainedVer =
+          curVersion ||
+          (existingCount <= 1 ? 'Initial' : `v${existingCount}`);
+
+        return {
+          id: proj.id,
+          projectNumber: trimmed,
+          study: fetchedStudy || '',
+          version: retainedVer,
+          jobType: proj.jobType || formData.jobType || 'New Installs',
+          existingCount,
+          latestReceivedDate: lastReceivedDate,
+          latestReceivedTime: lastReceivedTime,
+          psuReceivedDate: lastReceivedDate,
+          psuReceivedTime: lastReceivedTime,
+          latestVersion: retainedVer,
+          sourceFile: proj.sourceFile,
+        };
+      })
+    );
+
+    const primaryProject = resolvedProjects[0];
+    const totalDetected = parsedFileCandidates.length;
+    const disregardedCount = Math.max(0, totalDetected - resolvedProjects.length);
+
+    setFormData((prev) => ({
+      ...prev,
+      emailAddress: '',
+      scheduler: '',
+      region: targetRegion || prev.region,
+      psuReceivedDate: primaryProject?.psuReceivedDate || primaryProject?.latestReceivedDate || '',
+      psuReceivedTime: primaryProject?.psuReceivedTime || primaryProject?.latestReceivedTime || '',
+      projectNumber: primaryProject?.projectNumber || '',
+      study: primaryProject?.study || '',
+      jobType: primaryProject?.jobType || 'New Installs',
+      version: primaryProject?.version || defaultInitialVersion,
+      projects: resolvedProjects,
+      category: '',
+      reason: '',
+      remarks: '',
+      isEmailUpdate: true,
+    }));
+
+    const projectNames = resolvedProjects.map((p) => p.projectNumber).filter(Boolean).join(', ');
+    setToastMessage({
+      title: `Email Update: ${resolvedProjects.length} ${resolvedProjects.length === 1 ? 'Project' : 'Projects'} Added`,
+      desc: disregardedCount > 0
+        ? `Added ${resolvedProjects.length} ${resolvedProjects.length === 1 ? 'project' : 'projects'}${projectNames ? ` (${projectNames})` : ''} and disregarded ${disregardedCount}. Latest Google Sheet records fetched.`
+        : `Added ${resolvedProjects.length} ${resolvedProjects.length === 1 ? 'project' : 'projects'}${projectNames ? ` (${projectNames})` : ''}. Latest Google Sheet records fetched.`,
+    });
+    setTimeout(() => setToastMessage(null), 5500);
+  };
+
   // Current parsed email / PDF metadata
   const [currentResult, setCurrentResult] = useState<ParseResult | null>(null);
   const [isParsing, setIsParsing] = useState<boolean>(false);
@@ -349,6 +479,7 @@ export default function App() {
             study: isEmailUpdateActive ? '' : (ext.study || ''),
             version: isEmailUpdateActive ? defaultInitialVersion : (ext.version || defaultInitialVersion),
             jobType: ext.jobType || formData.jobType || 'New Installs',
+            sourceFile: result.metadata.fileName,
           },
         ]
       : [
@@ -358,8 +489,36 @@ export default function App() {
             study: '',
             version: defaultInitialVersion,
             jobType: formData.jobType || 'New Installs',
+            sourceFile: result.metadata.fileName,
           },
         ];
+
+    // Prepare candidate projects from rawProjects
+    const candidateProjects: ExtractedProjectCandidate[] = rawProjects
+      .filter((p) => p.projectNumber && p.projectNumber.trim().length > 0)
+      .map((p) => ({
+        id: p.id,
+        projectNumber: p.projectNumber.trim(),
+        study: p.study,
+        sourceFile: p.sourceFile || result.metadata.fileName,
+        version: p.version,
+        jobType: p.jobType,
+      }));
+
+    setParsedFileCandidates(candidateProjects);
+
+    // REQUIREMENT: For EMAIL UPDATE, all Project Numbers extracted from the Outlook file
+    // will be listed in a Modal Prompt so the user can select multiple Project Numbers to add to the form
+    // and the unselected will be disregarded.
+    if (isEmailUpdateActive && candidateProjects.length > 0) {
+      setEmailUpdateSelectorState({
+        isOpen: true,
+        candidates: candidateProjects,
+        fileName: result.metadata.fileName,
+        rawResult: result,
+      });
+      return;
+    }
 
     // Determine versions for all projects against Google Sheets
     let resolvedProjects = await Promise.all(
@@ -419,6 +578,10 @@ export default function App() {
             version: curVersion,
             jobType: 'For Correction',
             existingCount,
+            latestReceivedDate: lastReceivedDate,
+            latestReceivedTime: lastReceivedTime,
+            psuReceivedDate: lastReceivedDate,
+            psuReceivedTime: lastReceivedTime,
           };
         }
         const pIsRev = isRevisedVersion(pVersion);
@@ -427,6 +590,10 @@ export default function App() {
           version: pVersion,
           jobType: pIsRev ? 'Re-PSU (Revised)' : 'New Installs',
           existingCount,
+          latestReceivedDate: lastReceivedDate,
+          latestReceivedTime: lastReceivedTime,
+          psuReceivedDate: lastReceivedDate,
+          psuReceivedTime: lastReceivedTime,
         };
       })
     );
@@ -573,6 +740,8 @@ export default function App() {
     });
     confirmedProjectsRef.current.clear();
     setCurrentResult(null);
+    setParsedFileCandidates([]);
+    setEmailUpdateSelectorState(null);
     setToastMessage({
       title: 'Form Reset',
       desc: 'All fields have been cleared and reset to initial state.',
@@ -892,6 +1061,9 @@ export default function App() {
                     onRequestReentryConfirm={requestReentryConfirm}
                     confirmedProjectsRef={confirmedProjectsRef}
                     onShowToast={setToastMessage}
+                    onOpenEmailUpdateSelector={handleOpenEmailUpdateSelector}
+                    hasExtractedCandidates={parsedFileCandidates.length > 0}
+                    extractedCandidatesCount={parsedFileCandidates.length}
                   />
                 </div>
               </div>
@@ -1035,6 +1207,17 @@ export default function App() {
           onCancel={handleReentryCancel}
           onConfirmNewVersion={handleReentryNewVersion}
           onConfirmForCorrection={handleReentryForCorrection}
+        />
+      )}
+
+      {/* Email Update Project Selector Modal Prompt */}
+      {emailUpdateSelectorState && (
+        <EmailUpdateProjectSelectorModal
+          isOpen={emailUpdateSelectorState.isOpen}
+          onClose={() => setEmailUpdateSelectorState(null)}
+          candidates={emailUpdateSelectorState.candidates}
+          fileName={emailUpdateSelectorState.fileName}
+          onConfirmSelection={handleConfirmEmailUpdateProjects}
         />
       )}
     </div>
