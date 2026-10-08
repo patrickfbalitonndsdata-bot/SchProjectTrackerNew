@@ -81,6 +81,9 @@ interface PsuFormProps {
   onRequestReentryConfirm?: (projects: ExistingProjectReentryInfo[]) => Promise<ReentryDecision | boolean>;
   confirmedProjectsRef?: React.MutableRefObject<Set<string>>;
   onShowToast?: (msg: { title: string; desc: string }) => void;
+  onOpenEmailUpdateSelector?: () => void;
+  hasExtractedCandidates?: boolean;
+  extractedCandidatesCount?: number;
 }
 
 export const PsuForm: React.FC<PsuFormProps> = ({
@@ -98,6 +101,9 @@ export const PsuForm: React.FC<PsuFormProps> = ({
   onRequestReentryConfirm,
   confirmedProjectsRef,
   onShowToast,
+  onOpenEmailUpdateSelector,
+  hasExtractedCandidates = false,
+  extractedCandidatesCount = 0,
 }) => {
   const { season } = useTheme();
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -339,6 +345,12 @@ export const PsuForm: React.FC<PsuFormProps> = ({
     if (nextState) {
       if (formDataRef.current.psuReceivedDate) savedDateRef.current = formDataRef.current.psuReceivedDate;
       if (formDataRef.current.psuReceivedTime) savedTimeRef.current = formDataRef.current.psuReceivedTime;
+
+      // If multiple projects were extracted from an Outlook file, open the selection modal prompt!
+      if (onOpenEmailUpdateSelector && hasExtractedCandidates && extractedCandidatesCount > 1) {
+        onOpenEmailUpdateSelector();
+        return;
+      }
 
       // For every project, fetch recent RECEIVED TIME and DATE, STUDY, and retain current/latest version
       let fetchedPrimaryDate = '';
@@ -1515,6 +1527,23 @@ export const PsuForm: React.FC<PsuFormProps> = ({
                 <span>Study Keywords</span>
                 <ChevronDown className={`w-2.5 h-2.5 transition-transform ${showKeywordChips ? 'rotate-180' : ''}`} />
               </button>
+
+              {isEmailUpdate && onOpenEmailUpdateSelector && hasExtractedCandidates && (
+                <button
+                  type="button"
+                  id="open-email-update-selector-btn"
+                  onClick={onOpenEmailUpdateSelector}
+                  className={`inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-bold tracking-wide px-2.5 py-1 h-7 rounded-sm border shadow-xs transition-all cursor-pointer ${
+                    season === 'new_year'
+                      ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-amber-400/20'
+                      : 'bg-blue-50 dark:bg-amber-400/20 text-blue-700 dark:text-amber-300 border-blue-200 dark:border-amber-400/40 hover:bg-blue-100 dark:hover:bg-amber-400/30'
+                  }`}
+                  title="Choose which Project Numbers to include or disregard from the Outlook file"
+                >
+                  <Mail className="w-3 h-3 text-blue-600 dark:text-amber-400" />
+                  <span>Select from Outlook ({extractedCandidatesCount})</span>
+                </button>
+              )}
 
               <button
                 id="add-project-btn"
