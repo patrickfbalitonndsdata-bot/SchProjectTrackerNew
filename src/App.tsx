@@ -458,19 +458,24 @@ export default function App() {
     const defaultInitialVersion = 'Initial';
 
     // Prepare projects list from ext.projects or fallback
-    // When Email Update is active: fetch ONLY Project Numbers from the PDF files.
-    // STUDY and VERSION will be fetched strictly from the Latest record from Google Sheet.
+    // When PDF attachments are present, focus STRICTLY on the PDF attachments!
+    // Disregard any phantom projects extracted from the email body text.
+    const pdfAttachments = result.metadata?.attachments?.filter((a) => a.isPdf) || [];
+    const hasPdfs = pdfAttachments.length > 0;
+
     let rawProjects = Array.isArray(ext.projects) && ext.projects.length > 0
-      ? ext.projects.map((p, idx) => ({
-          id: p.id || `proj-${idx + 1}`,
-          projectNumber: p.projectNumber || '',
-          study: isEmailUpdateActive ? '' : (p.study || ext.study || ''),
-          version: isEmailUpdateActive
-            ? defaultInitialVersion
-            : (p.version ? (p.version.trim().toLowerCase() === 'initial' ? 'Initial' : p.version) : defaultInitialVersion),
-          jobType: p.jobType || formData.jobType || 'New Installs',
-          sourceFile: p.sourceFile || '',
-        }))
+      ? ext.projects
+          .filter((p) => !hasPdfs || !p.sourceFile || !p.sourceFile.includes('(Email Body)'))
+          .map((p, idx) => ({
+            id: p.id || `proj-${idx + 1}`,
+            projectNumber: p.projectNumber || '',
+            study: isEmailUpdateActive ? '' : (p.study || ext.study || ''),
+            version: isEmailUpdateActive
+              ? defaultInitialVersion
+              : (p.version ? (p.version.trim().toLowerCase() === 'initial' ? 'Initial' : p.version) : defaultInitialVersion),
+            jobType: p.jobType || formData.jobType || 'New Installs',
+            sourceFile: p.sourceFile || '',
+          }))
       : ext.projectNumber
       ? [
           {
@@ -493,9 +498,10 @@ export default function App() {
           },
         ];
 
-    // Prepare candidate projects from rawProjects
+    // Prepare candidate projects from rawProjects (strictly from PDF attachments if PDFs exist)
     const candidateProjects: ExtractedProjectCandidate[] = rawProjects
       .filter((p) => p.projectNumber && p.projectNumber.trim().length > 0)
+      .filter((p) => !hasPdfs || !p.sourceFile || !p.sourceFile.includes('(Email Body)'))
       .map((p) => ({
         id: p.id,
         projectNumber: p.projectNumber.trim(),
