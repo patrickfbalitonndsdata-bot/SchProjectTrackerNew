@@ -347,13 +347,21 @@ export async function parseFileClientSide(file: File): Promise<ParseResult> {
       });
     }
 
-    const firstPdfWithPrj = emlAttachments.find((a) => a.projectNumber && /\b\d{2}-\d{6}\b/.test(a.projectNumber));
-    const finalPrj = firstPdfWithPrj?.projectNumber || projectNumber;
-    const firstPdfWithStudy = emlAttachments.find((a) => a.study);
-    const finalStudyType = firstPdfWithStudy?.study || study;
+    const pdfOnlyAttachments = emlAttachments.filter((a) => a.isPdf);
+    const hasPdfs = pdfOnlyAttachments.length > 0;
+    const firstPdfWithPrj = pdfOnlyAttachments.find((a) => a.projectNumber && /\b\d{2}-\d{6}\b/.test(a.projectNumber)) || pdfOnlyAttachments.find((a) => a.projectNumber);
+    const finalPrj = hasPdfs
+      ? (firstPdfWithPrj?.projectNumber || pdfOnlyAttachments[0]?.projectNumber || '')
+      : projectNumber;
+    const firstPdfWithStudy = pdfOnlyAttachments.find((a) => a.study);
+    const finalStudyType = hasPdfs
+      ? (firstPdfWithStudy?.study || pdfOnlyAttachments[0]?.study || '')
+      : study;
 
-    let compiledProjects = emlAttachments.length > 0
-      ? emlAttachments.map((att, idx) => ({
+    // When PDF attachments are present, focus STRICTLY on the attached PDF files!
+    // Disregard email body text for project numbers to avoid picking up phantom reference numbers.
+    let compiledProjects = hasPdfs
+      ? pdfOnlyAttachments.map((att, idx) => ({
           id: `proj-${idx + 1}`,
           projectNumber: att.projectNumber || finalPrj,
           study: att.study || finalStudyType,
@@ -363,20 +371,22 @@ export async function parseFileClientSide(file: File): Promise<ParseResult> {
         }))
       : extractAllProjects(text, subject, fileName, finalStudyType, version);
 
-    // Also include any other unique project numbers found in the email body / subject
-    const bodyNumbers = extractAllProjectNumbers(text, subject);
-    const existingPrjSet = new Set(compiledProjects.map((p) => (p.projectNumber || '').trim().toLowerCase()).filter(Boolean));
-    for (const bNum of bodyNumbers) {
-      if (!existingPrjSet.has(bNum.toLowerCase())) {
-        existingPrjSet.add(bNum.toLowerCase());
-        compiledProjects.push({
-          id: `proj-${compiledProjects.length + 1}`,
-          projectNumber: bNum,
-          study: finalStudyType,
-          version,
-          jobType: getDefaultJobTypeForVersion(version),
-          sourceFile: `${fileName} (Email Body)`,
-        });
+    // Only if NO PDF attachments exist (e.g. text-only email) do we scan the email body for projects
+    if (!hasPdfs) {
+      const bodyNumbers = extractAllProjectNumbers(text, subject);
+      const existingPrjSet = new Set(compiledProjects.map((p) => (p.projectNumber || '').trim().toLowerCase()).filter(Boolean));
+      for (const bNum of bodyNumbers) {
+        if (!existingPrjSet.has(bNum.toLowerCase())) {
+          existingPrjSet.add(bNum.toLowerCase());
+          compiledProjects.push({
+            id: `proj-${compiledProjects.length + 1}`,
+            projectNumber: bNum,
+            study: finalStudyType,
+            version,
+            jobType: getDefaultJobTypeForVersion(version),
+            sourceFile: `${fileName} (Email Body)`,
+          });
+        }
       }
     }
 
@@ -489,14 +499,21 @@ export async function parseFileClientSide(file: File): Promise<ParseResult> {
       });
     }
 
-    const firstPdfWithPrj = msgAttachments.find((a) => a.projectNumber && /\b\d{2}-\d{6}\b/.test(a.projectNumber));
-    const finalPrj = firstPdfWithPrj?.projectNumber || projectNumber;
-    const firstPdfWithStudy = msgAttachments.find((a) => a.study);
-    const finalStudyType = firstPdfWithStudy?.study || study;
+    const pdfOnlyAttachments = msgAttachments.filter((a) => a.isPdf);
+    const hasPdfs = pdfOnlyAttachments.length > 0;
+    const firstPdfWithPrj = pdfOnlyAttachments.find((a) => a.projectNumber && /\b\d{2}-\d{6}\b/.test(a.projectNumber)) || pdfOnlyAttachments.find((a) => a.projectNumber);
+    const finalPrj = hasPdfs
+      ? (firstPdfWithPrj?.projectNumber || pdfOnlyAttachments[0]?.projectNumber || '')
+      : projectNumber;
+    const firstPdfWithStudy = pdfOnlyAttachments.find((a) => a.study);
+    const finalStudyType = hasPdfs
+      ? (firstPdfWithStudy?.study || pdfOnlyAttachments[0]?.study || '')
+      : study;
 
-    // Strict 1-to-1 Rule: Project count matches attached PDF count
-    let compiledProjects = msgAttachments.length > 0
-      ? msgAttachments.map((att, idx) => ({
+    // Strict Rule: When PDF attachments are present, focus STRICTLY on the attached PDF files!
+    // Disregard email body text for project numbers to avoid picking up phantom reference numbers.
+    let compiledProjects = hasPdfs
+      ? pdfOnlyAttachments.map((att, idx) => ({
           id: `proj-${idx + 1}`,
           projectNumber: att.projectNumber || finalPrj,
           study: att.study || finalStudyType,
@@ -506,20 +523,22 @@ export async function parseFileClientSide(file: File): Promise<ParseResult> {
         }))
       : extractAllProjects(extractedText, subject, fileName, finalStudyType, version);
 
-    // Also include any other unique project numbers found in the email body / subject
-    const bodyNumbers = extractAllProjectNumbers(extractedText, subject);
-    const existingPrjSet = new Set(compiledProjects.map((p) => (p.projectNumber || '').trim().toLowerCase()).filter(Boolean));
-    for (const bNum of bodyNumbers) {
-      if (!existingPrjSet.has(bNum.toLowerCase())) {
-        existingPrjSet.add(bNum.toLowerCase());
-        compiledProjects.push({
-          id: `proj-${compiledProjects.length + 1}`,
-          projectNumber: bNum,
-          study: finalStudyType,
-          version,
-          jobType: getDefaultJobTypeForVersion(version),
-          sourceFile: `${fileName} (Email Body)`,
-        });
+    // Only if NO PDF attachments exist (e.g. text-only email) do we scan the email body for projects
+    if (!hasPdfs) {
+      const bodyNumbers = extractAllProjectNumbers(extractedText, subject);
+      const existingPrjSet = new Set(compiledProjects.map((p) => (p.projectNumber || '').trim().toLowerCase()).filter(Boolean));
+      for (const bNum of bodyNumbers) {
+        if (!existingPrjSet.has(bNum.toLowerCase())) {
+          existingPrjSet.add(bNum.toLowerCase());
+          compiledProjects.push({
+            id: `proj-${compiledProjects.length + 1}`,
+            projectNumber: bNum,
+            study: finalStudyType,
+            version,
+            jobType: getDefaultJobTypeForVersion(version),
+            sourceFile: `${fileName} (Email Body)`,
+          });
+        }
       }
     }
 
@@ -729,16 +748,21 @@ export async function parseFilesClientSide(files: File[]): Promise<ParseResult> 
   // Strict 1-to-1 Rule: align projects with PDF attachments if any
   const pdfs = existingAttachments.filter((a) => a.isPdf);
   if (pdfs.length > 0) {
+    const firstPdfWithPrj = pdfs.find((p) => p.projectNumber && /\b\d{2}-\d{6}\b/.test(p.projectNumber)) || pdfs.find((p) => p.projectNumber);
+    const firstPdfWithStudy = pdfs.find((p) => p.study);
+    const primaryPrj = firstPdfWithPrj?.projectNumber || pdfs[0]?.projectNumber || '';
+    const primaryStudy = firstPdfWithStudy?.study || pdfs[0]?.study || '';
+
     baseResult.extractedData.projects = pdfs.map((pdf, idx) => ({
       id: `proj-${idx + 1}`,
-      projectNumber: pdf.projectNumber || baseResult.extractedData.projectNumber || '',
-      study: pdf.study || baseResult.extractedData.study || '',
+      projectNumber: pdf.projectNumber || primaryPrj,
+      study: pdf.study || primaryStudy,
       version: baseResult.extractedData.version || 'Initial',
       jobType: baseResult.extractedData.jobType || 'New Installs',
       sourceFile: pdf.fileName,
     }));
-    if (pdfs[0].projectNumber) baseResult.extractedData.projectNumber = pdfs[0].projectNumber;
-    if (pdfs[0].study) baseResult.extractedData.study = pdfs[0].study;
+    baseResult.extractedData.projectNumber = primaryPrj;
+    baseResult.extractedData.study = primaryStudy;
   }
 
   return baseResult;
