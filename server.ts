@@ -1924,9 +1924,11 @@ app.post('/api/parse-email', upload.any(), async (req, res) => {
     // Heuristic extraction directly on email text and PDF First Page text
     const heuristic = heuristicExtract(bodyText, subject, from, pdfFirstPagesText);
 
-    // Prioritize exact ##-###### from PDF Page 1 top-left if found
-    const firstPdfWithPrj = parsedPdfList.find((p) => p.projectNumber && /\b\d{2}-\d{6}\b/.test(p.projectNumber));
-    let detectedProjectNumber = firstPdfWithPrj?.projectNumber || heuristic.projectNumber || '';
+    // If PDF attachments are present, focus STRICTLY on the attached PDF files!
+    // Disregard email body text for project numbers and study type to eliminate phantom reference numbers.
+    const hasPdfAttachments = parsedPdfList.length > 0;
+    const firstPdfWithPrj = parsedPdfList.find((p) => p.projectNumber && /\b\d{2}-\d{6}\b/.test(p.projectNumber)) || parsedPdfList.find((p) => p.projectNumber);
+    let detectedProjectNumber = firstPdfWithPrj?.projectNumber || (hasPdfAttachments ? (parsedPdfList[0]?.projectNumber || '') : (heuristic.projectNumber || ''));
 
     // Auto-populate region from PDF header if email text did not specify one
     if (firstPdfWithPrj?.region && !heuristic.region) {
@@ -1940,7 +1942,7 @@ app.post('/api/parse-email', upload.any(), async (req, res) => {
       /^(safety\s*studies|safety|near-miss|collection|priority\s*client|priority|due\s*date|email|phone|contact|firm|ipo|special\s*instructions|did\s*you\s*know|with|w\/)\b/i.test(s.trim());
 
     const pdfStrictStudy = parsedPdfList.find((p) => p.study && !isBannedStudy(p.study))?.study || '';
-    let detectedStudy = pdfStrictStudy || (!isBannedStudy(heuristic.study) ? heuristic.study : '');
+    let detectedStudy = pdfStrictStudy || (hasPdfAttachments ? (parsedPdfList[0]?.study || '') : (!isBannedStudy(heuristic.study) ? heuristic.study : ''));
 
     // Check if fast-path extracted all required data without needing an expensive remote AI call
     const hasValidProject = Boolean(detectedProjectNumber && /\b\d{2}-\d{6}\b/.test(detectedProjectNumber));
@@ -1959,6 +1961,7 @@ app.post('/api/parse-email', upload.any(), async (req, res) => {
     if (needsAiFallback) {
       try {
         const prompt = `You are an expert assistant parsing an Outlook email and its attached documents/PDFs for a project scheduler PSU (Project Setup / Schedule Update) submission system.
+${hasPdfAttachments ? 'CRITICAL INSTRUCTION: Attached PDF files are present. You MUST extract "projectNumber", "study", and "projects" STRICTLY and EXCLUSIVELY from the attached PDF Page 1 texts. DO NOT extract Project Numbers or Study Types from the Outlook email body or subject, as email text contains past threads or signatures that are irrelevant.\n' : ''}
 Extract the following exact fields based on the email content, subject, and attached PDF Page 1 texts:
 
 Fields to extract:
@@ -2088,10 +2091,10 @@ Do not include markdown code fences in your raw output, or wrap cleanly in JSON.
     const cleanEmail = emailMatch ? emailMatch[1] : (from.includes('@') ? from.trim() : '');
 
     // Prioritize exact ##-###### from PDF Page 1 top-left if found
-    let finalProjectNumber = detectedProjectNumber || extractedData.projectNumber || heuristic.projectNumber || '';
+    let finalProjectNumber = detectedProjectNumber || (hasPdfAttachments ? (parsedPdfList[0]?.projectNumber || '') : (extractedData.projectNumber || heuristic.projectNumber || ''));
 
-    let finalStudy = normalizeStudyType(detectedStudy || extractedData.study || '');
-    if (!finalStudy && heuristic.study && !isBannedStudy(heuristic.study)) {
+    let finalStudy = normalizeStudyType(detectedStudy || (hasPdfAttachments ? (parsedPdfList[0]?.study || '') : (extractedData.study || '')));
+    if (!hasPdfAttachments && !finalStudy && heuristic.study && !isBannedStudy(heuristic.study)) {
       finalStudy = normalizeStudyType(heuristic.study);
     }
 
@@ -2120,7 +2123,7 @@ Do not include markdown code fences in your raw output, or wrap cleanly in JSON.
     if (parsedPdfList.length > 0) {
       for (let idx = 0; idx < parsedPdfList.length; idx++) {
         const pdfItem = parsedPdfList[idx];
-        const prj = pdfItem.projectNumber.trim() || finalProjectNumber;
+        const prj = pdfItem.projectNumber.trim() || (idx === 0 ? finalProjectNumber : '');
         const study = (!isBannedStudy(pdfItem.study) ? pdfItem.study : '') || finalStudy;
 
         compiledProjects.push({
