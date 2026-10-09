@@ -346,8 +346,8 @@ export const PsuForm: React.FC<PsuFormProps> = ({
       if (formDataRef.current.psuReceivedDate) savedDateRef.current = formDataRef.current.psuReceivedDate;
       if (formDataRef.current.psuReceivedTime) savedTimeRef.current = formDataRef.current.psuReceivedTime;
 
-      // If multiple projects were extracted from an Outlook file, open the selection modal prompt!
-      if (onOpenEmailUpdateSelector && hasExtractedCandidates && extractedCandidatesCount > 1) {
+      // If projects were extracted from an Outlook file, open the selection modal prompt!
+      if (onOpenEmailUpdateSelector && hasExtractedCandidates && extractedCandidatesCount >= 1) {
         onOpenEmailUpdateSelector();
         return;
       }
