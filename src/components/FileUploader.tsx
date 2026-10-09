@@ -133,35 +133,32 @@ export const FileUploader: React.FC<FileUploaderProps> = ({
       updatedAttachments[i] = att;
     }
 
-    if (anyUpdated) {
-      const firstPdf = updatedAttachments.find((a) => a.isPdf && (a.projectNumber || a.study));
+    const pdfAtts = updatedAttachments.filter((a) => a.isPdf);
+    if (pdfAtts.length > 0) {
+      const firstPdf = pdfAtts.find((a) => a.projectNumber && /\b\d{2}-\d{6}\b/.test(a.projectNumber)) || pdfAtts.find((a) => a.projectNumber || a.study) || pdfAtts[0];
       const newExtracted = { ...result.extractedData };
-      if (firstPdf) {
-        if (firstPdf.projectNumber && (!newExtracted.projectNumber || newExtracted.projectNumber === '')) {
-          newExtracted.projectNumber = firstPdf.projectNumber;
-        }
-        if (firstPdf.study && (!newExtracted.study || newExtracted.study === 'Uncategorized')) {
-          newExtracted.study = firstPdf.study;
-        }
-        if (firstPdf.region && !newExtracted.region) {
-          newExtracted.region = firstPdf.region;
-        }
+
+      // Strictly prioritize the Project Number and Study from the attached PDF Page 1
+      if (firstPdf?.projectNumber) {
+        newExtracted.projectNumber = firstPdf.projectNumber;
+      }
+      if (firstPdf?.study && firstPdf.study !== 'Uncategorized') {
+        newExtracted.study = firstPdf.study;
+      }
+      if (firstPdf?.region && !newExtracted.region) {
+        newExtracted.region = firstPdf.region;
       }
 
-      // Also update project items matching PDF files
-      if (Array.isArray(newExtracted.projects)) {
-        newExtracted.projects = newExtracted.projects.map((p) => {
-          const matchedAtt = updatedAttachments.find((a) => a.fileName === p.sourceFile);
-          if (matchedAtt) {
-            return {
-              ...p,
-              projectNumber: matchedAtt.projectNumber || p.projectNumber,
-              study: matchedAtt.study || p.study,
-            };
-          }
-          return p;
-        });
-      }
+      // Strictly focus projects on attached PDF files (1-to-1 with attached PDFs)
+      // Disregard any phantom projects or extra numbers read from the Outlook email body
+      newExtracted.projects = pdfAtts.map((att, idx) => ({
+        id: `proj-${idx + 1}`,
+        projectNumber: att.projectNumber || (firstPdf?.projectNumber || ''),
+        study: att.study || (firstPdf?.study || ''),
+        version: newExtracted.version || 'Initial',
+        jobType: newExtracted.jobType || 'New Installs',
+        sourceFile: att.fileName,
+      }));
 
       return {
         ...result,
@@ -170,6 +167,14 @@ export const FileUploader: React.FC<FileUploaderProps> = ({
           attachments: updatedAttachments,
         },
         extractedData: newExtracted,
+      };
+    } else if (anyUpdated) {
+      return {
+        ...result,
+        metadata: {
+          ...result.metadata,
+          attachments: updatedAttachments,
+        },
       };
     }
 
